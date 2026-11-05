@@ -22,7 +22,8 @@
 
   agents: {
     defaults: {
-      // The consult agents' brain: the smart model behind every voice flow.
+      // The consult agents' brain. Use a SOTA cloud model and/or a top-of-the-line local model here,
+      // never a small one: the fast voice model only talks, the consult model decides how smart it feels.
       model: { primary: "anthropic/claude-opus-5-5" },
       models: {
         // Both flags: DeepSeek reads "thinking", Qwen reads "enable_thinking".

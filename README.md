@@ -28,7 +28,7 @@ This is a writeup of a working home setup, not a product. Hostnames are placehol
 | Text to speech | `ResembleAI/chatterbox-turbo` with a cloned reference voice, via [`tts/`](tts/) | RTX 3090 |
 | Turn detection | Silero VAD v5.1.2 (ONNX) | Claw host, inside the shim (CPU) |
 | Speaker ID | ReDimNet `M-vb2+vox2+cnc-ft_mix` (primary) + NVIDIA TitaNet-L (second opinion) | GPU box (falls back to CPU) |
-| Deep agent ("the claw") | Your main OpenClaw agent. Ours is Claude Opus 5.5, so this hop is cloud. | Claw host (Ryzen AI Max+ 395) |
+| Consult agents (the brain) | SOTA and/or top local models: Claude Opus 5.5 (cloud) for Talk and phone, DeepSeek V4.1 Flash (local) for HA speakers. | Claw host (Ryzen AI Max+ 395) |
 | Voice-note fallback | OpenAI `gpt-4o-transcribe`, only if local Parakeet fails | cloud |
 | Glue | [`shim/`](shim/): a local stand-in for the OpenAI Realtime websocket API | Claw host |
 
@@ -68,7 +68,9 @@ Add your VAD's end-of-speech wait on top (about 0.25 s with "aggressive"). The f
 
 ## The backstop: fast local voice, smart agent behind it
 
-The local model does all the talking because it's fast. It is not the brain for anything real. When a turn needs reasoning, current info, tools or household facts, the local model calls your main OpenClaw agent, and that agent runs a smarter model. Ours is Claude Opus 5.5.
+The local model does all the talking because it's fast. It is not the brain for anything real. When a turn needs reasoning, current info, tools or household facts, the local model calls a consult agent.
+
+**The consults run on top models: a SOTA cloud model (ours: Claude Opus 5.5) and/or a top-of-the-line local model (ours: DeepSeek V4.1 Flash on 2x RTX Pro 6000).** Don't back a voice stack with a small model. The fast voice model is only the mouth; the consult model is the brain, and it decides how smart the whole thing feels.
 
 | Flow | Local model talks | Backstop |
 |---|---|---|
