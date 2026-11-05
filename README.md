@@ -1,6 +1,6 @@
 # clawvoice
 
-A fully local voice stack for OpenClaw and Home Assistant: wake-word speakers, the OpenClaw app/web UI Talk mode, real phone calls and Discord voice. One set of local models serves all of it, and a smart cloud agent is only called when the local model needs help.
+A local voice stack for OpenClaw and Home Assistant: wake-word speakers, the OpenClaw app/web UI Talk mode, real phone calls and Discord voice. One set of local models does all the listening, talking and speaking. The only cloud hop is when the local model hands a real task to your main agent (and the phone carrier for calls).
 
 This is a writeup of a working home setup, not a product. Hostnames are placeholders (`gpu-box`, `claw-host`, `ha`). Swap in your own.
 
@@ -18,15 +18,17 @@ This is a writeup of a working home setup, not a product. Hostnames are placehol
 
 ## The pieces
 
-| Job | Model / software | Runs on |
+| Job | Model (exact) | Runs on |
 |---|---|---|
-| Speech to text | NVIDIA Parakeet (onnx-asr), OpenAI-style `/v1/audio/transcriptions` HTTP | GPU box (a 3090 is plenty) |
-| Fast voice brain | Local LLM on vLLM, OpenAI-compatible (we've run DeepSeek V4 Flash, Qwen3.8-Flash-Next NVFP4 and now DeepSeek V4.1 Flash; any fast tool-calling model works) | GPU box (RTX Pro 6000 Blackwell) |
-| Text to speech | Chatterbox Turbo with a custom cloned voice, behind a small OpenAI-compatible `/v1/audio/speech` wrapper that streams | GPU box (same 3090) |
-| Turn detection | Silero VAD v5 (ONNX) | Claw host, inside the shim |
-| Speaker ID | ReDimNet (primary) + TitaNet-L (second opinion) | GPU box |
-| Deep agent ("the claw") | Your normal OpenClaw main agent | Claw host |
-| Glue | `realtime-shim`: a local stand-in for the OpenAI Realtime websocket API | Claw host |
+| Wake word | microWakeWord "Okay Nabu", on the satellite itself | Voice PE / Satellite 1 / ReSpeaker Lite (ESPHome) |
+| Speech to text | `nvidia/parakeet-tdt-0.6b-v2` (NeMo), served by [`stt/parakeet`](stt/parakeet/) | RTX 3090 (shares the card with TTS) |
+| Fast voice brain | DeepSeek V4.1 Flash, 3 bpw EXL3 quant, OpenAI-compatible API. Before that: `nvidia/Qwen3.8-Flash-Next-FP4-Local` (NVFP4) on vLLM, and DeepSeek V4 Flash. Any fast tool-calling model works. | 2x RTX Pro 6000 Blackwell (Qwen fit on one) |
+| Text to speech | `ResembleAI/chatterbox-turbo` with a cloned reference voice, via [`tts/`](tts/) | RTX 3090 |
+| Turn detection | Silero VAD v5.1.2 (ONNX) | Claw host, inside the shim (CPU) |
+| Speaker ID | ReDimNet `M-vb2+vox2+cnc-ft_mix` (primary) + NVIDIA TitaNet-L (second opinion) | GPU box (falls back to CPU) |
+| Deep agent ("the claw") | Your main OpenClaw agent. Ours is Claude Opus 5.5, so this hop is cloud. | Claw host (Ryzen AI Max+ 395) |
+| Voice-note fallback | OpenAI `gpt-4o-transcribe`, only if local Parakeet fails | cloud |
+| Glue | [`shim/`](shim/): a local stand-in for the OpenAI Realtime websocket API | Claw host |
 
 The trick that makes everything else work: **the shim**. OpenClaw's Talk mode, voice-call plugin and Discord voice all speak the OpenAI Realtime protocol. The shim speaks that same protocol on `ws://127.0.0.1:8820`, but behind it runs local STT → local LLM → local TTS. OpenClaw thinks it's talking to OpenAI. It isn't.
 
