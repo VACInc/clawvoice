@@ -1,0 +1,29 @@
+# Keeps benchmark/E2E voice traffic out of your chat.
+# While on, rest_command.claw_voice_consult still reaches the agent but sends
+# deliver:false, so the answer is logged and never announced.
+input_boolean:
+  voice_consult_test_mode:
+    name: Voice Consult Test Mode
+    icon: mdi:test-tube
+
+automation:
+  - id: voice_consult_test_mode_auto_off
+    alias: "Voice Consult Test Mode Auto-Off"
+    description: "Turns test mode off after 30 minutes so real voice consults never stay muted."
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.voice_consult_test_mode
+        to: "on"
+        for:
+          minutes: 30
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: state
+        entity_id: input_boolean.voice_consult_test_mode
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.voice_consult_test_mode

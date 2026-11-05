@@ -1,0 +1,238 @@
+diff --git a/config.yaml b/config.yaml
+index 2a5f0ea..f5555e5 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -1,6 +1,6 @@
+ server:
+-  host: 0.0.0.0
+-  port: 8004
++  host: 127.0.0.1
++  port: 31420
+   use_ngrok: false
+   use_auth: false
+   auth_username: user
+@@ -11,13 +11,13 @@ server:
+ model:
+   repo_id: chatterbox-turbo
+ tts_engine:
+-  device: auto
++  device: cuda
+   predefined_voices_path: voices
+   reference_audio_path: reference_audio
+   default_voice_id: Emily.wav
+ paths:
+-  model_cache: model_cache
+-  output: outputs
++  model_cache: /var/cache/chatterbox/model_cache
++  output: /var/cache/chatterbox/outputs
+ generation_defaults:
+   temperature: 0.8
+   exaggeration: 1.3
+diff --git a/models.py b/models.py
+index 9f5e619..92bd153 100644
+--- a/models.py
++++ b/models.py
+@@ -2,7 +2,7 @@
+ # Pydantic models for API request and response validation.
+ 
+ from typing import Optional, Literal
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, AliasChoices
+ 
+ 
+ class GenerationParams(BaseModel):
+@@ -88,7 +88,9 @@ class CustomTTSRequest(BaseModel):
+     )
+     seed: Optional[int] = Field(None, description="Overrides default seed if provided.")
+     speed_factor: Optional[float] = Field(
+-        None, description="Overrides default speed factor if provided."
++        None,
++        validation_alias=AliasChoices("speed_factor", "speed"),
++        description="Overrides default speed factor if provided. Also accepts the `speed` field name."
+     )
+     language: Optional[str] = Field(
+         None, description="Overrides default language if provided."
+diff --git a/server.py b/server.py
+index e435185..81bca42 100644
+--- a/server.py
++++ b/server.py
+@@ -70,7 +70,7 @@ from models import (  # Pydantic models
+ )
+ import utils  # Utility functions
+ 
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, AliasChoices
+ 
+ 
+ class OpenAISpeechRequest(BaseModel):
+@@ -78,7 +78,9 @@ class OpenAISpeechRequest(BaseModel):
+     input_: str = Field(..., alias="input")
+     voice: str
+     response_format: Literal["wav", "opus", "mp3"] = "wav"  # Add "mp3"
+-    speed: float = 1.0
++    speed: float = Field(
++        1.0, validation_alias=AliasChoices("speed", "speed_factor")
++    )
+     seed: Optional[int] = None
+     language: Optional[str] = None
+ 
+diff --git a/utils.py b/utils.py
+index ec99d5f..094f0b2 100644
+--- a/utils.py
++++ b/utils.py
+@@ -482,21 +482,12 @@ def apply_speed_factor(
+     audio_tensor: torch.Tensor, sample_rate: int, speed_factor: float
+ ) -> Tuple[torch.Tensor, int]:
+     """
+-    Applies a speed factor to an audio tensor.
+-    Uses librosa.effects.time_stretch if available for pitch preservation.
+-    Falls back to simple resampling via torchaudio.transforms.Resample if librosa is not available,
+-    which will alter pitch.
+-
+-    Args:
+-        audio_tensor: Input audio waveform (PyTorch tensor, expected mono).
+-        sample_rate: Sample rate of the input audio.
+-        speed_factor: Desired speed factor (e.g., 1.0 is normal, 1.5 is faster, 0.5 is slower).
+-
+-    Returns:
+-        A tuple of the speed-adjusted audio tensor and its sample rate (which remains unchanged).
+-        Returns the original tensor and sample rate if speed_factor is 1.0 or if adjustment fails.
++    Applies a speed factor to an audio tensor using ffmpeg's ``atempo`` filter
++    (pitch-preserving, artifact-free). Sample rate is preserved. Falls back to the
++    original audio on any failure.
+     """
+-    if speed_factor == 1.0:
++    if speed_factor is None or abs(float(speed_factor) - 1.0) < 1e-6:
+         return audio_tensor, sample_rate
+     if speed_factor <= 0:
+         logger.warning(
+@@ -504,77 +495,73 @@ def apply_speed_factor(
+         )
+         return audio_tensor, sample_rate
+ 
+-    audio_tensor_cpu = audio_tensor.cpu()
+-    # Ensure tensor is 1D mono for librosa and consistent handling
++    audio_tensor_cpu = audio_tensor.detach().cpu()
++    # Collapse to 1D mono for a clean single-channel encode.
+     if audio_tensor_cpu.ndim == 2:
+         if audio_tensor_cpu.shape[0] == 1:
+             audio_tensor_cpu = audio_tensor_cpu.squeeze(0)
+         elif audio_tensor_cpu.shape[1] == 1:
+             audio_tensor_cpu = audio_tensor_cpu.squeeze(1)
+-        else:  # True stereo or multi-channel
++        else:
+             logger.warning(
+-                f"apply_speed_factor received multi-channel audio (shape {audio_tensor_cpu.shape}). Using first channel only."
++                f"apply_speed_factor received multi-channel audio (shape {tuple(audio_tensor_cpu.shape)}). Using first channel only."
+             )
+             audio_tensor_cpu = audio_tensor_cpu[0, :]
+-
+     if audio_tensor_cpu.ndim != 1:
+         logger.error(
+-            f"apply_speed_factor: audio_tensor_cpu is not 1D after processing (shape {audio_tensor_cpu.shape}). Returning original audio."
++            f"apply_speed_factor: audio not 1D (shape {tuple(audio_tensor_cpu.shape)}). Returning original audio."
+         )
+         return audio_tensor, sample_rate
+ 
+-    if LIBROSA_AVAILABLE:
+-        try:
+-            audio_np = audio_tensor_cpu.numpy()
+-            # librosa.effects.time_stretch changes duration, not sample rate directly.
+-            # The 'rate' parameter in time_stretch is equivalent to speed_factor.
+-            stretched_audio_np = librosa.effects.time_stretch(
+-                y=audio_np, rate=speed_factor
+-            )
+-            speed_adjusted_tensor = torch.from_numpy(stretched_audio_np)
+-            logger.info(
+-                f"Applied speed factor {speed_factor} using librosa.effects.time_stretch. Original SR: {sample_rate}"
+-            )
+-            return speed_adjusted_tensor, sample_rate  # Sample rate is preserved
+-        except Exception as e_librosa:
+-            logger.error(
+-                f"Failed to apply speed factor {speed_factor} using librosa: {e_librosa}. "
+-                f"Falling back to basic resampling (pitch will change).",
+-                exc_info=True,
+-            )
+-            # Fallback to simple resampling (changes pitch)
+-            try:
+-                new_sample_rate_for_speedup = int(sample_rate / speed_factor)
+-                resampler = torchaudio.transforms.Resample(
+-                    orig_freq=sample_rate, new_freq=new_sample_rate_for_speedup
+-                )
+-                # Resample to new_sample_rate_for_speedup to change duration, then resample back to original SR
+-                # This is effectively what sox 'speed' does, but 'tempo' is better (which librosa does)
+-                # For simplicity in fallback, just resample and note pitch change
+-                # To actually change speed without changing sample rate and preserving pitch using *only* torchaudio is more complex
+-                # and typically involves phase vocoder or similar, which is beyond a simple fallback.
+-                # The torchaudio.functional.pitch_shift and then torchaudio.functional.speed is one way,
+-                # but librosa is simpler.
+-                # Given the instruction "Fallback to original audio" if librosa not available or fails, we'll stick to that.
+-                # Original plan: "If Librosa is not available, log a warning and return the original audio"
+-                logger.warning(
+-                    f"Librosa failed for speed factor. Returning original audio as primary fallback."
+-                )
+-                return audio_tensor, sample_rate
+-
+-            except Exception as e_resample_fallback:
+-                logger.error(
+-                    f"Fallback resampling for speed factor {speed_factor} also failed: {e_resample_fallback}. Returning original audio.",
+-                    exc_info=True,
+-                )
+-                return audio_tensor, sample_rate
+-
+-    else:  # Librosa not available
+-        logger.warning(
+-            f"Librosa not available for pitch-preserving speed adjustment (factor: {speed_factor}). "
+-            f"Returning original audio. Install librosa for this feature."
++    # A single atempo instance only supports 0.5-2.0; chain for wider factors.
++    def _atempo_chain(factor: float) -> str:
++        parts = []
++        remaining = float(factor)
++        while remaining > 2.0:
++            parts.append(2.0)
++            remaining /= 2.0
++        while remaining < 0.5:
++            parts.append(0.5)
++            remaining /= 0.5
++        parts.append(remaining)
++        return ",".join(f"atempo={p:.6f}" for p in parts)
++
++    import subprocess, tempfile, os as _os
++
++    in_path = out_path = None
++    try:
++        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_in:
++            in_path = f_in.name
++        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_out:
++            out_path = f_out.name
++        torchaudio.save(in_path, audio_tensor_cpu.unsqueeze(0), int(sample_rate))
++        filt = _atempo_chain(float(speed_factor))
++        cmd = [
++            "ffmpeg", "-y", "-loglevel", "error",
++            "-i", in_path,
++            "-filter:a", filt,
++            "-c:a", "pcm_s16le",
++            out_path,
++        ]
++        subprocess.run(cmd, check=True)
++        stretched, out_sr = torchaudio.load(out_path)
++        logger.info(
++            f"Applied speed factor {speed_factor} via ffmpeg atempo ({filt}). SR: {out_sr}"
++        )
++        return stretched.squeeze(0), out_sr
++    except Exception as e_ff:
++        logger.error(
++            f"ffmpeg atempo speed adjustment failed for factor {speed_factor}: {e_ff}. Returning original audio.",
++            exc_info=True,
+         )
+         return audio_tensor, sample_rate
++    finally:
++        for p in (in_path, out_path):
++            if p:
++                try:
++                    _os.remove(p)
++                except FileNotFoundError:
++                    pass
+ 
+ 
+ def trim_lead_trail_silence(

@@ -1,0 +1,29 @@
+[Unit]
+Description=ReDimNet speaker embedding service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=speaker-id
+Group=speaker-id
+WorkingDirectory=/opt/speaker-id
+EnvironmentFile=/etc/speaker-id/speaker-embed.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=XDG_CACHE_HOME=/opt/speaker-id/data/cache
+ExecStart=/opt/speaker-id/.venv/bin/python -m speaker_embed
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/speaker-id/data
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

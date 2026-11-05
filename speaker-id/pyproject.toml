@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ha-speaker-id"
+version = "1.0.0"
+description = "ReDimNet speaker identification service and frame-accurate Wyoming STT tee"
+requires-python = ">=3.10"
+dependencies = [
+  "aiohttp==3.14.4",
+  "numpy==2.2.6",
+  "torch==2.10.0",
+  "torchaudio==2.10.0",
+  "wyoming==1.10.0",
+]
+
+[project.scripts]
+speaker-embed = "speaker_embed.main:main"
+wyoming-tee = "wyoming_tee.main:main"
+
+[tool.setuptools.packages.find]
+include = ["speaker_embed*", "wyoming_tee*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "strict"
+testpaths = ["tests"]

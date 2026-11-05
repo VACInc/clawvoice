@@ -1,0 +1,13 @@
+[Unit]
+Description=Wyoming ASR bridge -> Parakeet HTTP
+After=network-online.target parakeet-stt.service
+
+[Service]
+WorkingDirectory=/opt/clawvoice/stt/wyoming-bridge
+# Agent-name fix on HA transcripts (names.py copied beside bridge.py); 0 turns it off.
+Environment=TARS_NAME_FIX=1
+ExecStart=/opt/clawvoice/stt/wyoming-bridge/.venv/bin/python bridge.py --uri tcp://0.0.0.0:10302 --http http://127.0.0.1:31411/v1/audio/transcriptions
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

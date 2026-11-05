@@ -1,0 +1,13 @@
+[Unit]
+Description=Parakeet-TDT STT (OpenAI-compatible /v1/audio/transcriptions)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/clawvoice/stt/parakeet
+Environment=STT_MODEL=nvidia/parakeet-tdt-0.6b-v2
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStart=/opt/clawvoice/stt/parakeet/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 31411
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+.test-venv/
+*.wav
+*.onnx
+*.pt
+*.nemo
+models/
+data/
+*.env
+!*.env.example

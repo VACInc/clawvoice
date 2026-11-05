@@ -1,0 +1,28 @@
+[Unit]
+Description=Frame-accurate Wyoming STT tee proxy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=speaker-id
+Group=speaker-id
+WorkingDirectory=/opt/speaker-id
+EnvironmentFile=/etc/speaker-id/wyoming-tee.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/speaker-id/.venv/bin/python -m wyoming_tee
+Restart=on-failure
+RestartSec=1
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/speaker-id/data
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

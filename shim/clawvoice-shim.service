@@ -1,0 +1,14 @@
+[Unit]
+Description=clawvoice realtime shim (OpenAI Realtime API -> local STT/LLM/TTS)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/clawvoice/shim
+Environment=PYTHONUNBUFFERED=1
+Environment=RTSHIM_HOST=127.0.0.1
+EnvironmentFile=-/etc/clawvoice/shim.env
+ExecStart=/opt/clawvoice/shim/.venv/bin/python3 /opt/clawvoice/shim/server.py
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
