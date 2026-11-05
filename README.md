@@ -65,6 +65,28 @@ End to end, from end of speech to first reply audio:
 
 Add your VAD's end-of-speech wait on top (about 0.25 s with "aggressive"). The first turn after ~30 min idle paid about 1.5 s extra for cold STT and Gateway paths until we added the keep-warm cron.
 
+## The backstop: fast local voice, smart agent behind it
+
+The local model does all the talking because it's fast. It is not the brain for anything real. When a turn needs reasoning, current info, tools or household facts, the local model calls your main OpenClaw agent, and that agent runs a smarter model. Ours is Claude Opus 5.5.
+
+| Flow | Local model talks | Backstop |
+|---|---|---|
+| Talk (app / web UI) | shim :8820 | `brain: "agent-consult"` → `openclaw_agent_consult` → main agent |
+| Phone | shim :8821 | `consultPolicy: "substantive"` → main agent, read-only tools |
+| HA speakers | vLLM direct | `ask_claw` → `/hooks/agent`, async, answer in chat |
+
+The main agent is just your normal agent with a smart primary model:
+
+```json
+{
+  "agents": { "defaults": { "model": { "primary": "anthropic/claude-opus-5-5" } } }
+}
+```
+
+The local model gets a line telling it never to claim it did something unless the consult returned it (see Flow 2). Without that line, it happily says "done, reminder set" and does nothing.
+
+For HA we point the hook at a locked-down `voice` agent on the local model instead, because the HA speaker accepts anyone in the room. If you trust everyone in your house, set the consult `agent_id` to your main agent and the smart model answers there too.
+
 ---
 
 ## Flow 1: Home Assistant speakers (wake word)
@@ -92,7 +114,7 @@ Setup:
 1. **STT.** Parakeet serves plain HTTP, so a small Wyoming-to-HTTP bridge sits in front of it for HA. HA's Wyoming integration points at the speaker-ID tee (see Flow 4), which forwards to the bridge.
 2. **Conversation agent.** The Extended OpenAI Conversation HACS integration, pointed straight at vLLM. The system prompt holds persona + functions, then the exposed-device list, then the time as the last line (see gotchas).
 3. **Expose fewer entities.** We cut exposed entities in half (1159 → 573). Every exposed entity goes into the prompt on every turn.
-4. **The handoff tool.** One function, `ask_claw`, calls a HA `rest_command` that POSTs to OpenClaw's `/hooks/agent`. It replies "on it" right away; the real answer arrives in Telegram. It's async because a deep agent turn takes far longer than anyone will wait at a speaker.
+4. **The handoff tool.** One function, `ask_claw`, calls a HA `rest_command` that POSTs to OpenClaw's `/hooks/agent`. It replies "on it" right away; the real answer arrives in Telegram. It's async because an agent turn takes longer than anyone will wait at a speaker. We point it at the locked-down `voice` agent (see [the backstop](#the-backstop-fast-local-voice-smart-agent-behind-it)).
 5. **Lock that hook down.** The hook targets a dedicated `voice` agent with every executable tool denied, no skills, no workspace context and no memory search. It runs one request at a time with a 60 s cooldown, accepts only a 1 to 2000 char question, and refuses any call without an authenticated HA admin context.
 6. **TTS.** The `openai_tts` custom component pointed at the Chatterbox wrapper, with `stream_pipelining: true` so it speaks sentence one while the LLM is still writing sentence two.
 7. **Satellite tuning.** Set "finished speaking detection" to aggressive.
@@ -150,7 +172,7 @@ phone → Twilio number → Media Streams websocket
   → consult main agent when needed (read-only tools)
 ```
 
-Honest scope: Twilio carries the call audio, so the phone network leg is not local. Every model is local.
+Honest scope: Twilio carries the call audio, so the phone network leg is not local. The voice models are local; consults go to your main agent's model.
 
 ```json
 {
@@ -161,9 +183,10 @@ Honest scope: Twilio carries the call audio, so the phone network leg is not loc
     "publicUrl": "https://<your-funnel-host>/voice/webhook",
     "serve": { "port": 3334, "path": "/voice/webhook" },
     "maxDurationSeconds": 900,
+    "agentId": "main",
     "realtime": {
       "enabled": true, "provider": "openai",
-      "toolPolicy": "safe-read-only", "consultPolicy": "substantive",
+      "toolPolicy": "safe-read-only", "consultPolicy": "substantive", "consultThinkingLevel": "low",
       "providers": { "openai": { "azureEndpoint": "http://127.0.0.1:8821", "apiKey": "local-shim", "model": "local", "voice": "myvoice" } }
     }
   } } } }
