@@ -15,6 +15,7 @@ This is a writeup of a working home setup, not a product. Hostnames are placehol
 | [`tts/chatterbox-server/`](tts/chatterbox-server/) | Small patch for Chatterbox-TTS-Server (the shim's `/tts` backend) |
 | [`speaker-id/`](speaker-id/) | Speaker recognition: a byte-exact Wyoming tee plus a ReDimNet/TitaNet embedding service |
 | [`llm/`](llm/) | The voice LLM: Qwen3.8 one-card vLLM recipe or DeepSeek V4.1 Flash |
+| [`config/`](config/) | Every voice block of our `openclaw.json` (Talk, realtime, phone, Discord, TTS, voice notes, consult agents, hooks) |
 | [`ha/`](ha/) | The HA side of the handoff tool: authenticated consult service + test-mode toggle |
 
 ## The pieces
@@ -75,13 +76,29 @@ The local model does all the talking because it's fast. It is not the brain for 
 | Phone | shim :8821 | `consultPolicy: "substantive"` → main agent, read-only tools |
 | HA speakers | vLLM direct | `ask_claw` → `/hooks/agent`, async, answer in chat |
 
-The main agent is just your normal agent with a smart primary model:
+The consult agents and how hard they think, per flow:
 
-```json
+```json5
 {
-  "agents": { "defaults": { "model": { "primary": "anthropic/claude-opus-5-5" } } }
+  agents: {
+    defaults: { model: { primary: "anthropic/claude-opus-5-5" } },
+    list: [
+      { id: "main", default: true, model: { primary: "anthropic/claude-opus-5-5" } },  // Talk + phone consults
+      { id: "voice", model: { primary: "local-llm/voice-llm", fallbacks: [] },          // HA consults, locked down
+        tools: { profile: "minimal", deny: ["*"] }, skills: [], contextInjection: "never" },
+    ],
+  },
+  talk: { agentId: "main", consultThinkingLevel: "medium", consultFastMode: false,
+          realtime: { brain: "agent-consult" } },
+  plugins: { entries: { "voice-call": { config: {
+    agentId: "main",
+    realtime: { consultPolicy: "substantive", consultThinkingLevel: "low", toolPolicy: "safe-read-only" },
+  } } } },
+  hooks: { allowedAgentIds: ["main", "voice"], allowRequestSessionKey: false },
 }
 ```
+
+Talk thinks at `medium` because you're looking at a screen and can wait a beat. Phone uses `low` because dead air on a call feels broken. Full blocks: [`config/openclaw.voice.json5`](config/openclaw.voice.json5).
 
 The local model gets a line telling it never to claim it did something unless the consult returned it (see Flow 2). Without that line, it happily says "done, reminder set" and does nothing.
 
@@ -137,6 +154,8 @@ Config (`openclaw.json`):
 ```json
 {
   "talk": {
+    "agentId": "main",
+    "consultThinkingLevel": "medium",
     "provider": "openai",
     "providers": {
       "openai": { "baseUrl": "http://gpu-box:5051/v1", "apiKey": "local", "model": "tts-1", "voice": "myvoice", "responseFormat": "wav" }
@@ -150,7 +169,7 @@ Config (`openclaw.json`):
       "providers": {
         "openai": { "azureEndpoint": "http://127.0.0.1:8820", "apiKey": "local-shim", "model": "local", "voice": "myvoice" }
       },
-      "instructions": "Stay brief and natural. Use openclaw_agent_consult when deeper reasoning, current information, or OpenClaw tools are needed. Never claim you set a reminder, changed a device, or know a household fact unless openclaw_agent_consult returned it."
+      "instructions": "Stay brief and natural. Use openclaw_agent_consult when deeper reasoning, current information, or OpenClaw tools are needed. Never say you set a reminder, changed a device, or know a household fact (people, pets, schedules, home state) unless openclaw_agent_consult returned it; for those requests always call openclaw_agent_consult instead of answering or declining yourself."
     }
   }
 }
@@ -246,6 +265,8 @@ Tests run offline: `python3 tests/test_names.py` etc.
 
 ## Config reference
 
+**Every voice block of our `openclaw.json`, as it runs today (scrubbed): [`config/openclaw.voice.json5`](config/openclaw.voice.json5).** Models, both consult agents, Talk, realtime, phone, Discord voice, chat TTS, voice notes, hooks. The snippets below are pieces of it.
+
 All hosts, tokens and IDs below are placeholders.
 
 ### OpenClaw: models and agents
@@ -260,7 +281,7 @@ Local model provider (OpenAI-compatible vLLM). Send both thinking flags (see got
     "models": [{ "id": "voice-llm", "contextWindow": 262144,
       "params": { "thinking": false, "chat_template_kwargs": { "enable_thinking": false } } }]
   } } },
-  "tools": { "toolSearch": { "enabled": true, "mode": "directory" } }
+  "tools": { "toolSearch": { "enabled": true, "mode": "tools" } }
 }
 ```
 
@@ -463,7 +484,7 @@ Enroll: `curl --data-binary @clip.wav 'http://127.0.0.1:8099/enroll?user=me'` fo
 ## Gotchas (the ones that actually bit)
 
 - **Prompt order decides latency.** Static stuff first (persona, functions), device list next, current time LAST at minute precision. Put the time first and vLLM's prefix cache misses on every turn.
-- **Tool search must be directory mode** for local models: `tools.toolSearch = {"enabled": true, "mode": "directory"}`. Code mode's meta-tool broke tool calling on DeepSeek.
+- **Keep Code Mode off for local models.** Its meta-tool broke tool calling on DeepSeek. Structured tool search (`tools.toolSearch = {"enabled": true, "mode": "tools"}`, or `"directory"`) works.
 - **Thinking models: send both flags.** On vLLM, `chat_template_kwargs.enable_thinking: false` is what turns thinking off; `thinking: false` alone gets ignored. Send both. Thinking on a voice lane adds seconds.
 - **STT mangles your agent's name.** Parakeet has no hotword input and writes "TARS" as Tarz/Taris/Taurus/Stars. One shared name-fix function runs at every STT exit (shim, HA bridge, voice notes), and the real words ("stars") only get rewritten when the agent is being addressed.
 - **Silero VAD, not energy VAD.** Energy gates open turns on breaths, sniffs and clicks, and those cut the agent off mid-sentence. Also drop "thank you" / "um" turns shorter than ~1.5 s; those are Whisper-style noise hallucinations.

@@ -1,0 +1,205 @@
+// Every voice-related block of our openclaw.json, as it runs today.
+// Scrubbed: hostnames -> gpu-box / your-funnel-host, agent id -> "main", voice -> "myvoice",
+// phone numbers -> +1555..., secrets -> SecretRefs (use your own 1Password/env/file refs).
+// Merge into your own openclaw.json; nothing here is required to be in one file.
+{
+  // ── Models ────────────────────────────────────────────────────────────────
+  models: {
+    providers: {
+      // The local voice LLM (vLLM, see llm/). Served model id "voice-llm".
+      "local-llm": {
+        baseUrl: "http://gpu-box:31320/v1",
+        apiKey: { source: "exec", provider: "local_llm_key", id: "value" }, // vLLM ignores it; OpenClaw wants one
+        api: "openai-completions",
+        maxTokens: 250000,
+        models: [
+          { id: "voice-llm", name: "Local voice LLM (vLLM)", api: "openai-completions",
+            contextWindow: 280000, contextTokens: 280000 },
+        ],
+      },
+    },
+  },
+
+  agents: {
+    defaults: {
+      // The consult agents' brain: the smart model behind every voice flow.
+      model: { primary: "anthropic/claude-opus-5-5" },
+      models: {
+        // Both flags: DeepSeek reads "thinking", Qwen reads "enable_thinking".
+        "local-llm/voice-llm": {
+          alias: "local",
+          params: { chat_template_kwargs: { thinking: false, enable_thinking: false } },
+        },
+      },
+    },
+    list: [
+      // Consult agent for Talk mode and phone calls: your normal main agent, full tools, smart model.
+      { id: "main", default: true, model: { primary: "anthropic/claude-opus-5-5" } },
+
+      // Consult agent for the HA speakers (ask_claw -> /hooks/agent). Anyone in the room can
+      // talk to a speaker, so this one gets nothing: no tools, skills, workspace context or memory.
+      // Want the smart model on HA too? Point the HA consult agent_id at "main" instead.
+      {
+        id: "voice",
+        name: "Voice",
+        workspace: "~/voice-workspace",
+        model: { primary: "local-llm/voice-llm", fallbacks: [] },
+        runtime: { type: "embedded" },
+        contextInjection: "never",
+        skills: [],
+        tools: { profile: "minimal", deny: ["*"], elevated: { enabled: false } },
+        memory: { search: { enabled: false } },
+      },
+    ],
+  },
+
+  // ── Talk mode (app / Control UI / web UI) ─────────────────────────────────
+  talk: {
+    agentId: "main",                 // consult agent for Talk
+    consultThinkingLevel: "medium",  // how hard the consult agent thinks
+    consultFastMode: false,
+    provider: "openai",              // plain (non-realtime) Talk TTS
+    providers: {
+      openai: {
+        apiKey: { source: "exec", provider: "local_tts_key", id: "value" },
+        baseUrl: "http://gpu-box:5051/v1",  // tts/chatterbox-openai
+        model: "tts-1",
+        voice: "myvoice",
+        responseFormat: "wav",
+      },
+    },
+    realtime: {
+      mode: "realtime",
+      transport: "gateway-relay",    // browser talks to the Gateway, never to the shim
+      brain: "agent-consult",        // local model talks, consult agent does the real work
+      provider: "openai",
+      model: "local",
+      speakerVoice: "myvoice",
+      providers: {
+        openai: {
+          apiKey: { source: "exec", provider: "local_shim_key", id: "value" }, // shim ignores it
+          model: "local",
+          voice: "myvoice",
+          azureEndpoint: "http://127.0.0.1:8820",  // the realtime shim
+        },
+        // Cloud alternative we keep configured for A/B; switch with realtime.provider.
+        google: { model: "gemini-3.1-flash-live-preview", voice: "Algieba", apiVersion: "v1beta" },
+      },
+      instructions: "Speak in a rapid-fire American general-accent newscaster style: crisp diction, high energy, tight pacing, clean sentence endings, and no drawn-out pauses. Stay brief and natural. Use openclaw_agent_consult when deeper reasoning, current information, or OpenClaw tools are needed. Never say you set a reminder, changed a device, or know a household fact (people, pets, schedules, home state) unless openclaw_agent_consult returned it; for those requests always call openclaw_agent_consult instead of answering or declining yourself.",
+    },
+  },
+
+  // ── Phone calls ───────────────────────────────────────────────────────────
+  plugins: {
+    entries: {
+      "voice-call": {
+        enabled: true,
+        config: {
+          enabled: true,
+          agentId: "main",           // consult agent for calls
+          provider: "twilio",
+          fromNumber: "+15550000001",
+          toNumber: "+15550000002",  // default number for outbound calls
+          inboundPolicy: "allowlist",
+          allowFrom: ["+15550000002"],
+          twilio: {
+            accountSid: "AC...",
+            authToken: { source: "exec", provider: "twilio_auth_token", id: "value" },
+          },
+          publicUrl: "https://your-funnel-host/voice/webhook",  // Tailscale Funnel, /voice/* only
+          serve: { port: 3334, path: "/voice/webhook" },
+          outbound: { defaultMode: "notify" },
+          maxDurationSeconds: 900,
+          realtime: {
+            enabled: true,
+            provider: "openai",
+            toolPolicy: "safe-read-only",   // tools the call itself may use
+            consultPolicy: "substantive",   // consult the agent for anything real
+            consultThinkingLevel: "low",    // phone wants the answer fast
+            consultFastMode: false,
+            providers: {
+              openai: {
+                apiKey: { source: "exec", provider: "local_shim_key", id: "value" },
+                model: "local",
+                voice: "myvoice",
+                azureEndpoint: "http://127.0.0.1:8821",  // second shim, phone-tuned VAD
+              },
+              google: {
+                model: "gemini-3.1-flash-live-preview", voice: "Algieba", apiVersion: "v1beta",
+                apiKey: { source: "exec", provider: "gemini_key", id: "value" },
+              },
+            },
+            instructions: "Speak in a rapid-fire American general-accent newscaster style: crisp diction, high energy, tight pacing, clean sentence endings, and no drawn-out pauses. Stay brief and natural. Handle the conversation directly using the call prompt and do not delegate it.",
+          },
+        },
+      },
+    },
+  },
+
+  // ── Discord voice channels ───────────────────────────────────────────────
+  channels: {
+    discord: {
+      voice: {
+        enabled: true,
+        tts: {
+          provider: "openai",
+          timeoutMs: 15000,
+          providers: {
+            openai: {
+              apiKey: { source: "exec", provider: "local_tts_key", id: "value" },
+              baseUrl: "http://gpu-box:5051/v1",
+              model: "tts-1",
+              responseFormat: "wav",
+              speakerVoice: "myvoice",
+            },
+          },
+        },
+        realtime: {
+          provider: "openai",
+          model: "local",
+          speakerVoice: "myvoice",
+          providers: {
+            openai: {
+              apiKey: { source: "exec", provider: "local_shim_key", id: "value" },
+              model: "local",
+              voice: "myvoice",
+              azureEndpoint: "http://127.0.0.1:8820",
+            },
+          },
+        },
+      },
+    },
+  },
+
+  // ── Chat TTS (read replies aloud) ─────────────────────────────────────────
+  tts: {
+    provider: "openai",
+    providers: {
+      openai: { model: "tts-1", baseUrl: "http://gpu-box:5051/v1", speakerVoice: "myvoice" },
+    },
+  },
+
+  // ── Voice notes (Telegram/Discord audio messages) ────────────────────────
+  tools: {
+    media: {
+      models: [
+        // Local Parakeet first; non-zero exit falls through to the next entry.
+        { type: "cli", command: "/usr/bin/python3",
+          args: ["/path/to/clawvoice/shim/transcribe_note.py", "{{MediaPath}}"],
+          capabilities: ["audio"], timeoutSeconds: 150 },
+        // Cloud fallback.
+        { provider: "openai", model: "gpt-4o-transcribe", capabilities: ["audio"] },
+      ],
+    },
+    toolSearch: { enabled: true, mode: "tools" },
+  },
+
+  // ── Hooks (HA ask_claw lands here) ───────────────────────────────────────
+  hooks: {
+    enabled: true,
+    path: "/hooks",
+    token: "<long random>",          // HA sends it as the Authorization header
+    allowedAgentIds: ["main", "voice"],
+    allowRequestSessionKey: false,
+  },
+}
