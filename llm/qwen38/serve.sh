@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PROD :31320 inner launcher (copy of the gauntlet candidate 11 inner, plus HOST bind): Qwen3.8-Flash-Next on ghcr.io/local-inference-lab/vllm:release-10152026,
+# Container launcher: Qwen3.8-Flash-Next on ghcr.io/local-inference-lab/vllm:release-10152026,
 # the nvidia/Qwen3.8-Flash-Next-FP4-Local model card's "NVIDIA RTX PRO 6000 Blackwell" two-step verbose recipe
 # (every exported env var and every flag), model mounted at /model. Differences from the card: /model instead of the
 # Hub id, --served-model-name voice-llm, port 31320, kernel caches pinned to the /cache volume (same paths the

@@ -6,10 +6,10 @@ Everything else in this repo talks to one OpenAI-compatible endpoint (`/v1/chat/
 |---|---|---|
 | Model | `nvidia/Qwen3.8-Flash-Next-FP4-Local` (NVFP4, QAD) | DeepSeek V4.1 Flash, 3 bpw EXL3 quant |
 | GPUs | 1x RTX PRO 6000 Blackwell (96 GB) | 2x RTX PRO 6000 Blackwell |
-| Server | vLLM (`ghcr.io/local-inference-lab/vllm:release-10152026`), MTP speculative decoding k=3 | EXL3 server, OpenAI-compatible |
-| Context | 262k native (we stretched to 524k with yarn x2) | 1M+ |
-| Tool calls | `--tool-call-parser qwen3_xml` | native |
-| Why pick it | One card, fastest first token, best all-round score in our tests | Strongest reasoning; needs two cards |
+| Server | vLLM (`ghcr.io/local-inference-lab/vllm:release-10152026`), MTP speculative decoding k=3 | EXL3, OpenAI-compatible |
+| Context | 262k (524k works with yarn x2) | |
+| Tool calls | `--tool-call-parser qwen3_xml` | |
+| Why pick it | Fits on one card | Smarter, needs two cards |
 
 ## Option A: Qwen on one card
 
