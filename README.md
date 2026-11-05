@@ -43,11 +43,39 @@ realtime-shim :8820  (Silero VAD, barge-in, name fix)
    └─▶ Chatterbox TTS      gpu-box:31420
 ```
 
+## Latency
+
+Measured on our box, warm, models on RTX Pro 6000 / 3090 cards, clients on the same LAN.
+
+| Stage | p50 | Notes |
+|---|---|---|
+| Parakeet STT, 2.4 s clip | 82 ms | 75 to 115 ms |
+| LLM first token (DeepSeek V4.1 Flash) | 91 ms | short voice prompt, thinking off |
+| LLM full one-sentence reply | 380 ms | |
+| TTS first audio, HA wrapper (`:5051`, streaming) | 295 ms | |
+| TTS one sentence, Chatterbox server (`:31420`, shim path) | 690 ms | whole sentence at once; the shim sends one sentence at a time |
+
+End to end, from end of speech to first reply audio:
+
+| Path | p50 |
+|---|---|
+| HA satellite (ReSpeaker Lite, hands-free, real wake word) | 0.6 s (0.60 / 0.63 / 1.24 s over 3 runs) |
+| HA pipeline, injected audio (Qwen3.8 option) | 0.55 s |
+| Talk shim (`:8820`), injected audio (Qwen3.8 option) | 0.76 s |
+
+Add your VAD's end-of-speech wait on top (about 0.25 s with "aggressive"). The first turn after ~30 min idle paid about 1.5 s extra for cold STT and Gateway paths until we added the keep-warm cron.
+
 ---
 
 ## Flow 1: Home Assistant speakers (wake word)
 
-Hardware: Home Assistant Voice PE pucks (plugged into real speakers, since the built-in speaker is weak), a FutureProofHomes Satellite 1 and a ReSpeaker Lite. All are ESPHome satellites.
+Hardware: Home Assistant Voice PE pucks (plugged into real speakers, since the built-in speaker is weak), a FutureProofHomes Satellite 1 and a ReSpeaker Lite. All run their vendors' stock ESPHome firmware, no custom YAML:
+
+- Voice PE: [esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe)
+- Satellite 1: [futureproofhomes/satellite1-esphome](https://github.com/futureproofhomes/satellite1-esphome)
+- ReSpeaker Lite: [formatBCE/Respeaker-Lite-ESPHome-integration](https://github.com/formatBCE/Respeaker-Lite-ESPHome-integration)
+
+Everything below is server side, so any HA Assist satellite works.
 
 ```
 satellite (wake word on device)
@@ -69,7 +97,7 @@ Setup:
 6. **TTS.** The `openai_tts` custom component pointed at the Chatterbox wrapper, with `stream_pipelining: true` so it speaks sentence one while the LLM is still writing sentence two.
 7. **Satellite tuning.** Set "finished speaking detection" to aggressive.
 
-Latency: about 0.6 s from end of speech to the first reply audio on a warm path (STT ~0.1 s, model ~0.5 s, TTS first chunk ~0.3 s, overlapping).
+Latency: about 0.6 s from end of speech to first reply audio (see [Latency](#latency)).
 
 ## Flow 2: OpenClaw app / Control UI Talk mode
 
