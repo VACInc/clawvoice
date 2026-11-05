@@ -14,6 +14,7 @@ This is a writeup of a working home setup, not a product. Hostnames are placehol
 | [`tts/chatterbox-openai/`](tts/chatterbox-openai/) | Chatterbox Turbo as an OpenAI `/v1/audio/speech` API with true streaming |
 | [`tts/chatterbox-server/`](tts/chatterbox-server/) | Small patch for Chatterbox-TTS-Server (the shim's `/tts` backend) |
 | [`speaker-id/`](speaker-id/) | Speaker recognition: a byte-exact Wyoming tee plus a ReDimNet/TitaNet embedding service |
+| [`llm/`](llm/) | The voice LLM: Qwen3.8 one-card vLLM recipe or DeepSeek V4.1 Flash |
 | [`ha/`](ha/) | The HA side of the handoff tool: authenticated consult service + test-mode toggle |
 
 ## The pieces
@@ -22,7 +23,7 @@ This is a writeup of a working home setup, not a product. Hostnames are placehol
 |---|---|---|
 | Wake word | microWakeWord "Okay Nabu", on the satellite itself | Voice PE / Satellite 1 / ReSpeaker Lite (ESPHome) |
 | Speech to text | `nvidia/parakeet-tdt-0.6b-v2` (NeMo), served by [`stt/parakeet`](stt/parakeet/) | RTX 3090 (shares the card with TTS) |
-| Fast voice brain | DeepSeek V4.1 Flash, 3 bpw EXL3 quant, OpenAI-compatible API. Before that: `nvidia/Qwen3.8-Flash-Next-FP4-Local` (NVFP4) on vLLM, and DeepSeek V4 Flash. Any fast tool-calling model works. | 2x RTX Pro 6000 Blackwell (Qwen fit on one) |
+| Fast voice brain | Either `nvidia/Qwen3.8-Flash-Next-FP4-Local` (NVFP4, vLLM, one card, recipe in [`llm/`](llm/)) or DeepSeek V4.1 Flash (3 bpw, two cards). Any fast tool-calling model works. | RTX Pro 6000 Blackwell (1 for Qwen, 2 for DeepSeek) |
 | Text to speech | `ResembleAI/chatterbox-turbo` with a cloned reference voice, via [`tts/`](tts/) | RTX 3090 |
 | Turn detection | Silero VAD v5.1.2 (ONNX) | Claw host, inside the shim (CPU) |
 | Speaker ID | ReDimNet `M-vb2+vox2+cnc-ft_mix` (primary) + NVIDIA TitaNet-L (second opinion) | GPU box (falls back to CPU) |
